@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: sponsio
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /data
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ADMIN_SECRET
+        generateValue: true
+      - key: MONAD_TESTNET_RPC_URL
+        value: https://testnet-rpc.monad.xyz
+      - key: SPONSIO_TESTNET_ADDRESS
+        sync: false
+      - key: OPERATOR_PRIVATE_KEY
+        sync: false
+    disk:
+      name: sponsio-data
+      mountPath: /data
+      sizeGB: 1

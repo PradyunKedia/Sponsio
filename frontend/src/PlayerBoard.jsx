@@ -1,60 +1,51 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { api } from './lib/api';
 
-export default function PlayerBoard() {
-  const [players, setPlayers] = useState({});
+export default function PlayerBoard({ roomCode }) {
+  const [room, setRoom] = useState(null);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    const fetchPlayers = async () => {
-      try {
-        const res = await fetch('http://localhost:3001/players');
-        const data = await res.json();
-        setPlayers(data);
-      } catch (err) {
-        console.error(err);
-      }
+    if (!roomCode) return undefined;
+    let active = true;
+    const load = () => api.getRoom(roomCode)
+      .then(({ room: next }) => active && setRoom(next))
+      .catch((reason) => active && setError(reason.message));
+    load();
+    const timer = setInterval(load, 2000);
+    return () => {
+      active = false;
+      clearInterval(timer);
     };
-    fetchPlayers();
-    const interval = setInterval(fetchPlayers, 2000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const playerList = Object.values(players);
+  }, [roomCode]);
 
   return (
-    <div className="animate-fade-in">
-      <div className="flex-between" style={{ marginBottom: '2rem' }}>
-        <h1 className="title-gradient">Player Board</h1>
-        <div style={{ color: 'var(--text-muted)' }}>{playerList.length} Players Online</div>
+    <main className="main">
+      <div className="page-head">
+        <div>
+          <span className="kicker">Sponsio room {roomCode}</span>
+          <h1 className="title-gradient">Player Board</h1>
+        </div>
+        <span className="chip">{room?.playerCount || 0} / {room?.capacity || 100} profiles</span>
       </div>
-
-      <div className="leaderboard-list">
-        {playerList.map((p, idx) => (
-          <div key={p.address} className="leaderboard-item">
-            <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
-              <div className="rank-badge">#{idx + 1}</div>
-              <div className="player-info">
-                <h3>{p.username}</h3>
-                <p title={p.description}>{p.description}</p>
+      {error && <div className="error-box">{error}</div>}
+      <div className="glass board-card">
+        <div className="entries">
+          {(room?.leaderboard || []).map((profile, index) => (
+            <div className={`entry ${index === 0 ? 'rank-1' : ''}`} key={profile.address}>
+              <div className="entry-rank">#{index + 1}</div>
+              <div className="entry-names">
+                <div className="entry-name">{profile.username}</div>
+                <div className="entry-story">{profile.description}</div>
+              </div>
+              <div className="entry-stats">
+                <div className="entry-stat"><div className="k">Headcount</div><div className="v">{profile.headCount}</div></div>
+                <div className="entry-stat"><div className="k">Equity</div><div className="v">{profile.totalActiveEquity}</div></div>
               </div>
             </div>
-            
-            <div className="stats-group">
-              <div>
-                <div className="stat-label">Address</div>
-                <div style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>
-                  {p.address.slice(0,6)}...{p.address.slice(-4)}
-                </div>
-              </div>
-              <button className="btn-secondary" style={{ whiteSpace: 'nowrap' }}>Switch to Profile</button>
-            </div>
-          </div>
-        ))}
-        {playerList.length === 0 && (
-          <div className="glass-panel" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-            No players have entered the arena yet.
-          </div>
-        )}
+          ))}
+        </div>
       </div>
-    </div>
+    </main>
   );
 }

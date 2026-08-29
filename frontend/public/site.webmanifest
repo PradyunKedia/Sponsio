@@ -1,0 +1,17 @@
+{
+  "name": "Sponsio",
+  "short_name": "Sponsio",
+  "description": "A 100-second multiplayer coordination market settled on Monad.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F3F0F7",
+  "theme_color": "#7B68EE",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
