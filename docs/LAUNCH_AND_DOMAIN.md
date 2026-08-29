@@ -1,27 +1,29 @@
 # Public Launch and Custom Domain
 
-## One-service deployment
+## Split deployment
 
-The root Dockerfile builds the React frontend and serves it from the same Express process as the API and WebSocket endpoint. This avoids cross-origin and WebSocket routing mistakes.
+The root Dockerfile deploys the persistent Express/WebSocket backend to Render. The `frontend` directory deploys the Next.js application to Vercel.
 
 1. Push the repository publicly.
-2. Use `render.yaml` or deploy the Dockerfile on another container host.
+2. Use `render.yaml` to create the Render backend.
 3. Attach a persistent disk at `/data`.
-4. Configure `SPONSIO_TESTNET_ADDRESS` and `OPERATOR_PRIVATE_KEY`.
-5. Confirm `/health` returns `{"ok":true}` over HTTPS.
-6. Create a room and confirm the browser opens a secure `wss://` connection.
-7. Run `npm run set-live-url -- https://your-public-url`.
+4. Configure `SPONSIO_TESTNET_ADDRESS`, `OPERATOR_PRIVATE_KEY`, and `CORS_ORIGIN`.
+5. Confirm the Render `/health` endpoint returns `{"ok":true}` over HTTPS.
+6. Create a Vercel project rooted at `frontend`.
+7. Configure `NEXT_PUBLIC_API_URL=https://your-render-service` and `NEXT_PUBLIC_WS_URL=wss://your-render-service`.
+8. Deploy and confirm the browser opens a secure `wss://` connection to Render.
+9. Run `npm run set-live-url -- https://your-vercel-url`.
 
 ## Custom domain
 
 1. Buy or select a domain.
-2. Add it in the hosting provider.
+2. Add it to the Vercel project.
 3. Add the provider's CNAME or A record at the DNS host.
 4. Wait for HTTPS certificate issuance.
 5. Set `CORS_ORIGIN` to the final `https://` URL.
 6. Run `npm run set-live-url -- https://your-domain`.
 7. Rebuild/redeploy and test in an incognito browser.
-8. Verify both `https://your-domain/health` and the app's WebSocket connection.
+8. Verify the Render health endpoint and the app's WebSocket connection.
 
 ## Public validation
 

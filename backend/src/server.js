@@ -1,6 +1,4 @@
 const http = require('node:http');
-const fs = require('node:fs');
-const path = require('node:path');
 const express = require('express');
 const cors = require('cors');
 const { createRoomSchema, nonceSchema, joinSchema } = require('./lib/schemas');
@@ -33,7 +31,12 @@ function createServer({ config, roomManager, auth, chain = null }) {
   app.set('trust proxy', 1);
   const corsOrigins = config.CORS_ORIGIN.split(',').map((value) => value.trim());
   if (config.NODE_ENV === 'development') {
-    corsOrigins.push('http://localhost:5173', 'http://127.0.0.1:5173');
+    corsOrigins.push(
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+    );
   }
   app.use(cors({ origin: [...new Set(corsOrigins)] }));
   app.use(express.json({ limit: '32kb' }));
@@ -179,17 +182,6 @@ function createServer({ config, roomManager, auth, chain = null }) {
     if (!room.settlement) return res.status(409).json({ error: 'Settlement is not ready' });
     res.json({ settlement: room.settlement });
   });
-
-  const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist');
-  if (config.NODE_ENV === 'production' && fs.existsSync(frontendDist)) {
-    app.use(express.static(frontendDist));
-    app.use((req, res, next) => {
-      if (req.method !== 'GET' || req.path.startsWith('/rooms') || req.path.startsWith('/auth')) {
-        return next();
-      }
-      res.sendFile(path.join(frontendDist, 'index.html'));
-    });
-  }
 
   app.use((error, _req, res, _next) => {
     const status =

@@ -15,7 +15,7 @@ Use this as the final pre-submission checklist. Never claim an item without open
   - Action: run `npm run deploy:testnet`.
 - [ ] Project publicly hosted
   - Evidence: public HTTPS application URL
-  - Action: deploy the included Docker image with WebSocket support and persistent storage.
+  - Action: deploy the backend on Render and the Next.js frontend on Vercel.
 
 ## Project working points
 

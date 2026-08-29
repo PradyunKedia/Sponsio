@@ -122,7 +122,7 @@ cp frontend/.env.example frontend/.env
 npm --prefix frontend run dev
 ```
 
-Open <http://localhost:5173>, create a room, and share its six-character room code or `?room=CODE` link. The creator's first joined wallet becomes the host. The host can start once at least two wallets have joined.
+Open <http://localhost:3000>, create a room, and share its six-character room code or `?room=CODE` link. The creator's first joined wallet becomes the host. The host can start once at least two wallets have joined.
 
 ## Tests
 
@@ -151,21 +151,23 @@ The public QuickNode endpoint is limited to 50 requests/second and 25 requests/s
 
 ## Public hosting
 
-The included Docker image builds the frontend and serves it from the same Node process as the API and WebSocket server:
+Sponsio uses a split production deployment: the stateful Express/WebSocket backend runs on Render with persistent SQLite, while the Next.js frontend runs on Vercel.
+
+Deploy the backend:
 
 ```bash
 docker build -t sponsio .
 docker run --env-file backend/.env -p 3001:3001 -v sponsio-data:/data sponsio
 ```
 
-Deploy this image to any container host with persistent disk support and WebSocket upgrades. Alternatively, deploy the backend and `frontend/dist` separately. Then:
-
 [Deploy on Render](https://render.com/deploy?repo=https://github.com/PradyunKedia/Monad_Hack)
 
-1. Set backend `CORS_ORIGIN` to the frontend URL.
-2. Set frontend `VITE_API_URL` and `VITE_WS_URL` to the public backend before building.
-3. Update the live URL and contract address at the top of this README.
-4. Run a two-wallet public round and record the create, join, settlement, and claim transactions.
+1. In Render, set `SPONSIO_TESTNET_ADDRESS`, `OPERATOR_PRIVATE_KEY`, and `CORS_ORIGIN=https://YOUR_VERCEL_DOMAIN`.
+2. Confirm `https://YOUR_RENDER_SERVICE/health` succeeds.
+3. Import the repository into Vercel with Root Directory set to `frontend`.
+4. Set `NEXT_PUBLIC_API_URL=https://YOUR_RENDER_SERVICE` and `NEXT_PUBLIC_WS_URL=wss://YOUR_RENDER_SERVICE`.
+5. Deploy, then run `npm run set-live-url -- https://YOUR_VERCEL_DOMAIN`.
+6. Run a two-wallet public round and record the create, join, settlement, and claim transactions.
 
 For horizontal scaling beyond one Node instance, move SQLite to Postgres/Redis and route each room to one authoritative worker. The current single-instance design is tested for 100 simultaneous players per room.
 

@@ -14,6 +14,8 @@ services:
         generateValue: true
       - key: ADMIN_SECRET
         generateValue: true
+      - key: CORS_ORIGIN
+        sync: false
       - key: MONAD_TESTNET_RPC_URL
         value: https://testnet-rpc.monad.xyz
       - key: SPONSIO_TESTNET_ADDRESS

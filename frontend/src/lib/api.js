@@ -1,9 +1,12 @@
 const API_URL = (
-  import.meta.env.VITE_API_URL ||
-  (import.meta.env.DEV ? 'http://localhost:3001' : window.location.origin)
+  process.env.NEXT_PUBLIC_API_URL ||
+  (process.env.NODE_ENV === 'development' ? 'http://localhost:3001' : '')
 ).replace(/\/$/, '');
 
 async function request(path, options = {}) {
+  if (!API_URL) {
+    throw new Error('NEXT_PUBLIC_API_URL is not configured for this deployment.');
+  }
   const { token, headers, ...fetchOptions } = options;
   const response = await fetch(`${API_URL}${path}`, {
     ...fetchOptions,
@@ -41,7 +44,8 @@ export const api = {
 };
 
 export function websocketUrl(roomCode, token) {
-  const explicit = import.meta.env.VITE_WS_URL;
+  const explicit = process.env.NEXT_PUBLIC_WS_URL;
   const base = explicit || API_URL.replace(/^http/, 'ws');
+  if (!base) throw new Error('NEXT_PUBLIC_WS_URL is not configured for this deployment.');
   return `${base.replace(/\/$/, '')}/ws?room=${encodeURIComponent(roomCode)}&token=${encodeURIComponent(token)}`;
 }
