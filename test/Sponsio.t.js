@@ -1,196 +1,94 @@
 const { expect } = require("chai");
-const { ethers, network } = require("hardhat");
-const { time } = require("@nomicfoundation/hardhat-network-helpers");
-
-const abi = ethers.AbiCoder.defaultAbiCoder();
-const ROOM_A = ethers.keccak256(ethers.toUtf8Bytes("ROOM-A"));
-const ROOM_B = ethers.keccak256(ethers.toUtf8Bytes("ROOM-B"));
-const STAKE = ethers.parseEther("0.001");
-
-function leaf(roomId, address, amount) {
-  return ethers.keccak256(abi.encode(
-    ["bytes32", "address", "uint256"],
-    [roomId, address, amount],
-  ));
-}
-
-function hashPair(a, b) {
-  return ethers.keccak256(ethers.concat(a.toLowerCase() < b.toLowerCase() ? [a, b] : [b, a]));
-}
-
-function merkleTree(leaves) {
-  const layers = [leaves];
-  while (layers.at(-1).length > 1) {
-    const current = layers.at(-1);
-    const next = [];
-    for (let i = 0; i < current.length; i += 2) {
-      next.push(i + 1 < current.length ? hashPair(current[i], current[i + 1]) : current[i]);
-    }
-    layers.push(next);
-  }
-  return {
-    root: layers.at(-1)[0],
-    proof(index) {
-      const result = [];
-      for (let level = 0; level < layers.length - 1; level += 1) {
-        const sibling = index % 2 === 0 ? index + 1 : index - 1;
-        if (sibling < layers[level].length) result.push(layers[level][sibling]);
-        index = Math.floor(index / 2);
-      }
-      return result;
-    },
-  };
-}
+const { ethers } = require("hardhat");
 
 describe("Sponsio", function () {
   let sponsio;
-  let creator;
-  let operator;
-  let players;
+  let owner, p1, p2, p3, p4;
 
   beforeEach(async function () {
-    [creator, operator, ...players] = await ethers.getSigners();
-    sponsio = await ethers.deployContract("Sponsio");
+    [owner, p1, p2, p3, p4] = await ethers.getSigners();
+    const Sponsio = await ethers.getContractFactory("Sponsio");
+    sponsio = await Sponsio.deploy();
   });
 
-  async function createRoom(roomId = ROOM_A, maxPlayers = 100) {
-    const now = await time.latest();
-    const deadlines = {
-      join: now + 1000,
-      game: now + 1100,
-      settle: now + 1200,
-      claim: now + 1300,
-    };
-    await sponsio.createRoom(
-      roomId,
-      operator.address,
-      STAKE,
-      maxPlayers,
-      deadlines.join,
-    );
-    return deadlines;
-  }
-
-  it("isolates rooms and rejects duplicate joins", async function () {
-    await createRoom(ROOM_A);
-    await createRoom(ROOM_B);
-    await sponsio.connect(players[0]).joinRoom(ROOM_A, { value: STAKE });
-    await expect(
-      sponsio.connect(players[0]).joinRoom(ROOM_A, { value: STAKE }),
-    ).to.be.revertedWith("Already joined");
-    await sponsio.connect(players[0]).joinRoom(ROOM_B, { value: STAKE });
-
-    expect((await sponsio.getRoom(ROOM_A)).playerCount).to.equal(1);
-    expect((await sponsio.getRoom(ROOM_B)).playerCount).to.equal(1);
+  it("Should allow participants to join", async function () {
+    await sponsio.connect(p1).joinGame();
+    await sponsio.connect(p2).joinGame();
+    
+    const participant1 = await sponsio.participants(p1.address);
+    expect(participant1.hasJoined).to.be.true;
+    expect(participant1.switchCount).to.equal(0);
   });
 
-  it("supports an arbitrary odd-sized room", async function () {
-    await createRoom(ROOM_A, 5);
-    for (let i = 0; i < 5; i += 1) {
-      await sponsio.connect(players[i]).joinRoom(ROOM_A, { value: STAKE });
-    }
-    expect((await sponsio.getRoom(ROOM_A)).playerCount).to.equal(5);
+  it("Should start the game and pair participants fairly with 1 backer each", async function () {
+    await sponsio.connect(p1).joinGame();
+    await sponsio.connect(p2).joinGame();
+    await sponsio.connect(p3).joinGame();
+    await sponsio.connect(p4).joinGame();
+
+    await sponsio.connect(owner).startGame();
+
+    expect(await sponsio.isGameStarted()).to.be.true;
+    expect(await sponsio.numProfiles()).to.equal(4);
+
+    // Verify paired initial targets
+    const part0 = await sponsio.participants(p1.address);
+    const part1 = await sponsio.participants(p2.address);
+    expect(part0.targetProfile).to.equal(1);
+    expect(part1.targetProfile).to.equal(0);
+
+    // Each profile should have exactly 1 backer initially
+    const prof0 = await sponsio.profiles(0);
+    const prof1 = await sponsio.profiles(1);
+    expect(prof0.headCount).to.equal(1);
+    expect(prof1.headCount).to.equal(1);
   });
 
-  it("enforces capacity and exact stake", async function () {
-    await createRoom(ROOM_A, 2);
-    await expect(
-      sponsio.connect(players[0]).joinRoom(ROOM_A, { value: 0 }),
-    ).to.be.revertedWith("Incorrect stake");
-    await sponsio.connect(players[0]).joinRoom(ROOM_A, { value: STAKE });
-    await sponsio.connect(players[1]).joinRoom(ROOM_A, { value: STAKE });
-    await expect(
-      sponsio.connect(players[2]).joinRoom(ROOM_A, { value: STAKE }),
-    ).to.be.revertedWith("Room is full");
+  it("Should apply loyalty penalty on switch", async function () {
+    await sponsio.connect(p1).joinGame();
+    await sponsio.connect(p2).joinGame();
+    await sponsio.connect(p3).joinGame();
+    await sponsio.connect(p4).joinGame();
+
+    await sponsio.connect(owner).startGame();
+
+    // p1 initially backs profile 1, now switches to profile 2
+    await sponsio.connect(p1).switchProfile(2);
+
+    const part1 = await sponsio.participants(p1.address);
+    expect(part1.switchCount).to.equal(1);
+    expect(part1.targetProfile).to.equal(2);
+
+    // Profile 2 gets p1's penalized active equity (850 instead of 1000) + initial 1000 = 1850
+    const prof2 = await sponsio.profiles(2);
+    expect(prof2.totalActiveEquity).to.equal(1850);
   });
 
-  it("accepts 100 independently funded players", async function () {
-    this.timeout(30_000);
-    await createRoom(ROOM_A, 100);
-    for (let i = 0; i < 100; i += 1) {
-      const wallet = ethers.Wallet.createRandom().connect(ethers.provider);
-      await network.provider.send("hardhat_setBalance", [
-        wallet.address,
-        "0x56BC75E2D63100000",
-      ]);
-      await sponsio.connect(wallet).joinRoom(ROOM_A, { value: STAKE });
-    }
-    expect((await sponsio.getRoom(ROOM_A)).playerCount).to.equal(100);
-  });
+  it("Should determine winner and allow claiming", async function () {
+    await sponsio.connect(p1).joinGame();
+    await sponsio.connect(p2).joinGame();
+    await sponsio.connect(p3).joinGame();
+    await sponsio.connect(p4).joinGame();
 
-  it("commits a payout root and permits proof-based claims once", async function () {
-    const deadlines = await createRoom();
-    await sponsio.connect(players[0]).joinRoom(ROOM_A, { value: STAKE });
-    await sponsio.connect(players[1]).joinRoom(ROOM_A, { value: STAKE });
-    await sponsio.connect(operator).startRoom(
-      ROOM_A,
-      deadlines.game,
-      deadlines.settle,
-      deadlines.claim,
-    );
-    await time.increaseTo(deadlines.game);
+    await sponsio.connect(owner).startGame();
 
-    const amounts = [STAKE + STAKE / 2n, STAKE / 2n];
-    const leaves = [
-      leaf(ROOM_A, players[0].address, amounts[0]),
-      leaf(ROOM_A, players[1].address, amounts[1]),
-    ];
-    const tree = merkleTree(leaves);
-    await sponsio.connect(operator).commitSettlement(
-      ROOM_A,
-      0,
-      ethers.keccak256(ethers.toUtf8Bytes("state")),
-      tree.root,
-      STAKE * 2n,
-    );
+    // p3 switches to back profile 0 (so profile 0 has 2 backers: p2 and p3)
+    await sponsio.connect(p3).switchProfile(0);
 
-    await expect(
-      sponsio.connect(players[0]).claim(ROOM_A, amounts[0], tree.proof(0)),
-    ).to.changeEtherBalances([sponsio, players[0]], [-amounts[0], amounts[0]]);
-    await expect(
-      sponsio.connect(players[0]).claim(ROOM_A, amounts[0], tree.proof(0)),
-    ).to.be.revertedWith("Already claimed");
-    await expect(
-      sponsio.connect(players[1]).claim(ROOM_A, amounts[0], tree.proof(1)),
-    ).to.be.revertedWith("Invalid proof");
-  });
+    // Fast-forward 101 seconds
+    await ethers.provider.send("evm_increaseTime", [101]);
+    await ethers.provider.send("evm_mine");
 
-  it("rejects unauthorized and malformed settlements", async function () {
-    const deadlines = await createRoom();
-    await sponsio.connect(players[0]).joinRoom(ROOM_A, { value: STAKE });
-    await sponsio.connect(players[1]).joinRoom(ROOM_A, { value: STAKE });
-    await sponsio.connect(operator).startRoom(
-      ROOM_A,
-      deadlines.game,
-      deadlines.settle,
-      deadlines.claim,
-    );
-    await time.increaseTo(deadlines.game);
-    const root = leaf(ROOM_A, players[0].address, STAKE * 2n);
-    const stateRoot = ethers.keccak256(ethers.toUtf8Bytes("state"));
+    await sponsio.connect(owner).determineWinner();
 
-    await expect(
-      sponsio.connect(players[0]).commitSettlement(ROOM_A, 0, stateRoot, root, STAKE * 2n),
-    ).to.be.revertedWith("Not room operator");
-    await expect(
-      sponsio.connect(operator).commitSettlement(ROOM_A, 0, stateRoot, root, STAKE),
-    ).to.be.revertedWith("Payout must equal pool");
-  });
+    expect(await sponsio.winningProfile()).to.equal(0);
+    expect(await sponsio.winnerDetermined()).to.equal(true);
 
-  it("allows individual refunds after a missed settlement deadline", async function () {
-    const deadlines = await createRoom();
-    await sponsio.connect(players[0]).joinRoom(ROOM_A, { value: STAKE });
-    await sponsio.connect(players[1]).joinRoom(ROOM_A, { value: STAKE });
-    await sponsio.connect(operator).startRoom(
-      ROOM_A,
-      deadlines.game,
-      deadlines.settle,
-      deadlines.claim,
-    );
-    await time.increaseTo(deadlines.settle + 1);
-    await expect(
-      sponsio.connect(players[0]).refund(ROOM_A),
-    ).to.changeEtherBalances([sponsio, players[0]], [-STAKE, STAKE]);
-    await expect(sponsio.connect(players[0]).refund(ROOM_A)).to.be.revertedWith("Already refunded");
+    // p2 claims prize
+    await expect(sponsio.connect(p2).claimPrize())
+      .to.emit(sponsio, "PrizeClaimed");
+
+    const part2 = await sponsio.participants(p2.address);
+    expect(part2.hasClaimed).to.be.true;
   });
 });

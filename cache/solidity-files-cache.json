@@ -1,10 +1,10 @@
 {
   "_format": "hh-sol-cache-2",
   "files": {
-    "/Users/pradyun/Desktop/Monad-Hack/contracts/BlitzConsensus.sol": {
-      "lastModificationDate": 1787939871239,
-      "contentHash": "8f13c8ba29b7bf4b4ccaeae0235e3a20",
-      "sourceName": "contracts/BlitzConsensus.sol",
+    "/Users/pradyun/Desktop/Monad-Hack/contracts/Sponsio.sol": {
+      "lastModificationDate": 1788264551410,
+      "contentHash": "bad7c1a0007bac7b20abf42fd339a6e3",
+      "sourceName": "contracts/Sponsio.sol",
       "solcConfig": {
         "version": "0.8.20",
         "settings": {
@@ -34,7 +34,7 @@
         "^0.8.20"
       ],
       "artifacts": [
-        "BlitzConsensus"
+        "Sponsio"
       ]
     }
   }

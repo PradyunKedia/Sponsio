@@ -1,209 +1,129 @@
-# Sponsio
+# SPONSIO
 
-[![CI](https://github.com/PradyunKedia/Monad_Hack/actions/workflows/ci.yml/badge.svg)](https://github.com/PradyunKedia/Monad_Hack/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-7B68EE.svg)](LICENSE)
 
-Sponsio is a real-time multiplayer coordination market on Monad Testnet. Between 2 and 100 people join a room with MetaMask, pitch their projects, and spend 100 seconds backing one another. Switching remains possible throughout the round, but loyalty and time-decay reduce a switcher's payout weight. Headcount decides the winner; surviving effective equity decides how the escrowed pool is split.
+**Sponsio** is a fast-paced, 100-second live peer coordination market built for Monad. Unlike traditional prediction markets that observe external events, Sponsio is an **endogenous consensus mechanism** where the market's live state directly produces the decision.
 
-## Public deployment
+Players enter the arena, pitch their proudest builds, and spend 100 seconds coordinating support. Switching targets is allowed at any moment, but **loyalty curves** and **soft time decay** penalize indecision and late bandwagons. Headcount decides the winning build, while surviving effective equity determines each backer's pro-rata share of the escrowed pool.
 
-- GitHub: <https://github.com/PradyunKedia/Monad_Hack>
-<!-- SPONSIO_LIVE_START -->
-- Live app: **deployment pending**
-<!-- SPONSIO_LIVE_END -->
-<!-- SPONSIO_CONTRACT_START -->
-- Monad Testnet contract: [`0x27b2417caA861379ec739D0a583EaE5Aa0e283b4`](https://testnet.monadscan.com/address/0x27b2417caA861379ec739D0a583EaE5Aa0e283b4)
-<!-- SPONSIO_CONTRACT_END -->
-- Explorer: <https://testnet.monadscan.com>
-- Network: Monad Testnet, chain ID `10143`
+---
 
-Do not replace these placeholders until the public frontend/backend and contract are actually live. The deployment commands below produce the contract address and explorer link.
+## The Mechanism & Mathematics
 
-## What works
+### 1. Starting Conditions & Fair Initialization
+- Each room supports any arbitrary number of participants $L \ge 2$.
+- Each player starts with a base stake $V_0 = 1,000$ votes.
+- Total prize pool: $P = L \times V_0$.
+- **Fair Initial Pairing**: At $t = 0$, participants are deterministically paired ($0 \leftrightarrow 1, 2 \leftrightarrow 3, \ldots$ with a 3-way cycle for odd counts). Every single profile starts with **exactly 1 backer**, preventing early monopoly.
 
-- Multiple isolated rooms with any size from 2–100 players
-- MetaMask wallet connection and forced Monad Testnet network selection
-- Wallet-signed, nonce-protected room authentication
-- Persistent SQLite room/session/event state with restart recovery
-- Authoritative WebSocket countdown, leaderboard, reconnect, and idempotent switches
-- Even and odd participant assignment
-- On-chain testnet MON escrow per room
-- O(1) room creation/join/refund and O(log N) Merkle payout claims
-- Operator timeout with individual player refunds
-- Public projector/player-board data
-- 100-client concurrent WebSocket load test
+### 2. Loyalty Curve $L(s)$
+Every switch $s$ surrenders a percentage of active equity to the pool while preserving full voting weight:
 
-## Architecture
+| Switches ($s$) | Loyalty Multiplier $L(s)$ | Active Equity $A_i$ |
+| :--- | :--- | :--- |
+| **0** (Initial) | $1.00$ ($100\%$) | $1,000$ |
+| **1** | $0.85$ ($85\%$) | $850$ |
+| **2** | $0.60$ ($60\%$) | $600$ |
+| **3** | $0.40$ ($40\%$) | $400$ |
+| **$\ge 4$** | $0.15$ ($15\%$) | $150$ |
 
-The backend owns latency-sensitive live gameplay. Monad Testnet owns funds and settlement.
+### 3. Soft Time Decay $T(t)$
+Early conviction is rewarded without locking out late-game comebacks:
+$$T(t) = \max\left(0.80,\, 1.00 - 0.002 \cdot t\right)$$
+A participant's time term is locked at the moment of their final switch ($t_{\text{last}}$).
 
-1. The backend operator creates an escrow room on `Sponsio.sol`.
-2. Players connect MetaMask, switch to Monad Testnet, sign a login challenge, and call `joinRoom`.
-3. The room host starts with any 2–100 joined players.
-4. Switches travel over authenticated WebSockets and are persisted as an ordered event log.
-5. At 100 seconds, the backend calculates the winner and publishes a state hash plus Merkle payout root.
-6. Winning players claim directly from the contract. If the operator does not settle, every player can refund independently.
+### 4. Effective Claim & Payout
+The effective claim $E_i$ represents a player's proportional entitlement:
+$$E_i = A_i \times T(t_i) = V_0 \times L(s_i) \times T(t_i)$$
 
-The hybrid trust model is explicit: the contract guarantees escrow, payout limits, one claim per player, and refunds. The operator attests to live-game accounting through the published state and payout roots.
+- **Win Condition**: Headcount (most unique backers).
+- **Tie-Breaker**: Highest sum of Active Equity ($\sum A_i$).
+- **Payout**: $100\%$ of the escrowed pool splits strictly among the backers of the winning profile:
+$$\text{Payout}_i = P \times \frac{E_i}{\sum_{j \in \text{Backers}(\text{Winner})} E_j}$$
 
-## Prerequisites
+---
 
-- Node.js 22+
-- MetaMask
-- Monad Testnet MON from <https://faucet.monad.xyz>
-- A funded Monad Testnet operator/deployer wallet
+## Retro Arcade User Experience
 
-Monad Testnet was reset from genesis on 2025-12-16. Never reuse an address from an earlier deployment.
+- **Multi-Game Canvas Backdrops**: 5 real-time canvas games rendering on a dynamic $1000 \times 1000$ logical grid (Breakout on Landing, dual-board Tetris on Onboarding, dual-board Pong on Waiting Room, Snake on Arena, Space Invaders on Final).
+- **Interactive Joystick Console**: Top-down arcade joystick responsive to keyboard arrow keys (Up, Down, Left, Right, Diagonals) and mouse motion.
+- **7-Segment LED Clock**: Glowing digital LED countdown timer.
+- **Hybrid Typography**: Authentic arcade pixel marquee titles and badges (`Press Start 2P`) paired with clean, readable sans-serif typography (`Nunito` / `Inter`) for pitches, project bios, and forms.
+- **MetaMask Authentication**: Seamless connection with account-switching permissions (`wallet_requestPermissions`) and user-friendly error traps.
 
-## Install
+---
 
+## Project Structure
+
+```
+Monad-Hack/
+├── contracts/
+│   └── Sponsio.sol           # Solidity contract (pairing, loyalty curve, settlement)
+├── frontend/
+│   ├── index.html            # Vite entrypoint
+│   ├── vite.config.js        # Vite + React 19 configuration
+│   ├── src/
+│   │   ├── App.jsx           # View router and screen wipe transitions
+│   │   ├── ArcadeBackdrop.jsx# 5-game procedural canvas backdrop
+│   │   ├── ArcadeConsole.jsx # 4-direction keyboard/mouse joystick
+│   │   ├── FinalScreen.jsx   # Victory confetti & dynamic equity claim
+│   │   ├── GameWindow.jsx    # 100s live arena, leaderboard, profile dossiers
+│   │   ├── Landing.jsx       # Arcade attract start screen
+│   │   ├── Onboarding.jsx    # Callsign, pitch, and MetaMask connection
+│   │   ├── SevenSeg.jsx      # Vector 7-segment digital countdown
+│   │   ├── WaitingRoom.jsx   # Dynamic queue lobby & dot matrix
+│   │   └── index.css         # Hybrid arcade styling system
+├── backend/
+│   └── index.js              # Express mock AI registration & room status
+├── test/
+│   └── Sponsio.t.js          # Hardhat contract test suite
+└── hardhat.config.js         # Hardhat configuration (Monad Testnet ready)
+```
+
+---
+
+## Getting Started
+
+### 1. Prerequisites
+- **Node.js**: v18+ (Node.js 22 recommended)
+- **npm**
+
+### 2. Installation
+Install all dependencies in root, frontend, and backend:
 ```bash
 npm install
-npm --prefix backend install
 npm --prefix frontend install
+npm --prefix backend install
 ```
 
-## Configure and deploy the contract
-
+### 3. Running Locally
+Start the frontend development server:
 ```bash
-cp .env.example .env
+npm --prefix frontend run dev
 ```
+Open **`http://localhost:5173`** in your browser.
 
-Set `DEPLOYER_PRIVATE_KEY` in `.env`. Keep the `0x` prefix and never commit this file.
-
-```bash
-npm test
-npm run deploy:testnet
-```
-
-The deployment is written to `deployments/monad-testnet.json`. Copy its address into:
-
-```bash
-cp backend/.env.example backend/.env
-```
-
-Set these backend values:
-
-```env
-SPONSIO_TESTNET_ADDRESS=0xYourDeployedAddress
-OPERATOR_PRIVATE_KEY=0xYourOperatorPrivateKey
-SESSION_SECRET=a-long-random-production-secret
-CORS_ORIGIN=https://your-public-frontend.example
-```
-
-The operator configured by the backend must be funded with testnet MON to create, start, and settle rooms.
-
-## Verify source on Monad explorers
-
-After deployment:
-
-```bash
-npm run verify:testnet
-```
-
-This submits the Solidity standard JSON and compiler metadata to the Monad verification API, which publishes source across supported explorers. Confirm the source is visible at:
-
-```text
-https://testnet.monadscan.com/address/YOUR_CONTRACT_ADDRESS
-```
-
-## Run locally
-
-Terminal 1:
-
+*(Optional)* Start the mock backend server:
 ```bash
 npm --prefix backend start
 ```
+Runs on **`http://localhost:3001`**.
 
-Terminal 2:
+---
 
-```bash
-cp frontend/.env.example frontend/.env
-npm --prefix frontend run dev
-```
+## Testing & Smart Contract Verification
 
-Open <http://localhost:3000>, create a room, and share its six-character room code or `?room=CODE` link. The creator's first joined wallet becomes the host. The host can start once at least two wallets have joined.
-
-## Tests
-
+Run the Hardhat smart contract test suite:
 ```bash
 npm test
-npm --prefix backend test
-npm --prefix backend run load-test
-npm --prefix frontend test
-npm --prefix frontend run lint
+```
+
+Build the production frontend:
+```bash
 npm --prefix frontend run build
 ```
 
-The load test connects 100 authenticated WebSocket clients, submits simultaneous switches, and verifies that headcounts and client sequences remain consistent.
+---
 
-## Monad Testnet details
-
-- Chain ID: `10143`
-- Currency: `MON`
-- RPC: <https://testnet-rpc.monad.xyz>
-- WebSocket RPC: `wss://testnet-rpc.monad.xyz`
-- Monadscan: <https://testnet.monadscan.com>
-- MonadVision: <https://testnet.monadvision.com>
-- Faucet: <https://faucet.monad.xyz>
-
-The public QuickNode endpoint is limited to 50 requests/second and 25 requests/second for `eth_call` and `eth_estimateGas`. Sponsio rate-limits backend membership checks to remain below that ceiling. Monad charges based on transaction gas limit, so frontend contract calls use measured estimates with at most a 10% buffer.
-
-## Public hosting
-
-Sponsio uses a split production deployment: the stateful Express/WebSocket backend runs on Render with persistent SQLite, while the Next.js frontend runs on Vercel.
-
-Deploy the backend:
-
-```bash
-docker build -t sponsio .
-docker run --env-file backend/.env -p 3001:3001 -v sponsio-data:/data sponsio
-```
-
-[Deploy on Render](https://render.com/deploy?repo=https://github.com/PradyunKedia/Monad_Hack)
-
-1. In Render, set `SPONSIO_TESTNET_ADDRESS`, `OPERATOR_PRIVATE_KEY`, and `CORS_ORIGIN=https://YOUR_VERCEL_DOMAIN`.
-2. Confirm `https://YOUR_RENDER_SERVICE/health` succeeds.
-3. Import the repository into Vercel with Root Directory set to `frontend`.
-4. Set `NEXT_PUBLIC_API_URL=https://YOUR_RENDER_SERVICE` and `NEXT_PUBLIC_WS_URL=wss://YOUR_RENDER_SERVICE`.
-5. Deploy, then run `npm run set-live-url -- https://YOUR_VERCEL_DOMAIN`.
-6. Run a two-wallet public round and record the create, join, settlement, and claim transactions.
-
-For horizontal scaling beyond one Node instance, move SQLite to Postgres/Redis and route each room to one authoritative worker. The current single-instance design is tested for 100 simultaneous players per room.
-
-## Judging checklist
-
-- [x] Public GitHub repository
-- [ ] Live public page added to this README
-- [ ] Monad Testnet contract address added to this README
-- [ ] Contract deployed and source verified
-- [ ] Public frontend/backend hosting
-- [x] Announced multiplayer functions implemented
-- [ ] Live on-chain transaction demonstrated
-- [x] Reproducible setup and test commands documented
-- [ ] Social launch post tagging `@monad`, `@monad_dev`, and `@geeky_kartikey`
-- [ ] 30+ second product demo video
-- [ ] Creative advertisement video
-
-Optional organizer points after the required testnet demo: deploy a separately reviewed release to Monad Mainnet and attach the public page to a custom domain. Mainnet is intentionally not enabled by this repository's current deployment script.
-
-## Economic model
-
-- Base weight: 1,000 units
-- Loyalty multipliers by switch count: `1.00`, `0.85`, `0.60`, `0.40`, then `0.15`
-- Time multiplier: linear from `1.00` to `0.80` during the 100-second round
-- Winner: highest unique-backer headcount, then active equity, then lowest profile index
-- Payout: full escrow pool split among winner backers by effective equity
-
-See [SPONSIO_PLAN.md](SPONSIO_PLAN.md) for the original mechanism design.
-
-Submission materials:
-
-- [Points checklist](docs/JUDGING_CHECKLIST.md)
-- [Demo video runbook](docs/VIDEO_RUNBOOK.md)
-- [Creative ad storyboard](docs/AD_STORYBOARD.md)
-- [Social launch copy](docs/SOCIAL_PACK.md)
-- [Ethical 5K-view launch plan](docs/VIEW_GROWTH_PLAN.md)
-- [Pre-market fit and revenue](docs/PMF_AND_REVENUE.md)
-- [Public launch and custom domain](docs/LAUNCH_AND_DOMAIN.md)
-- [Pitch runbook](PITCH.md)
+## License
+MIT © Sponsio

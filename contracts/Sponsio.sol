@@ -2,249 +2,231 @@
 pragma solidity ^0.8.20;
 
 contract Sponsio {
-    uint16 public constant MAX_PLAYERS = 100;
-
-    enum RoomStatus {
-        None,
-        Open,
-        Locked,
-        Settled,
-        Refunding,
-        Finalized
+    uint256 public constant V_0 = 1000;
+    uint256 public constant DURATION = 100; // 100 seconds
+    
+    address public admin;
+    uint256 public startTime;
+    bool public isGameStarted;
+    bool public isGameEnded;
+    
+    struct Participant {
+        bool hasJoined;
+        uint256 switchCount;
+        uint256 lastSwitchTime;
+        uint256 targetProfile;
+        bool hasClaimed;
     }
-
-    struct Room {
-        address creator;
-        address operator;
-        uint128 stake;
-        uint16 maxPlayers;
-        uint16 playerCount;
-        uint64 joinDeadline;
-        uint64 gameEnd;
-        uint64 settleDeadline;
-        uint64 claimDeadline;
-        uint256 pool;
-        uint256 claimedAmount;
-        uint256 winningProfile;
-        bytes32 stateRoot;
-        bytes32 payoutsRoot;
-        RoomStatus status;
+    
+    struct Profile {
+        uint256 headCount;
+        uint256 totalActiveEquity;
     }
-
-    mapping(bytes32 => Room) private rooms;
-    mapping(bytes32 => mapping(address => bool)) public hasJoined;
-    mapping(bytes32 => mapping(address => bool)) public hasClaimed;
-
-    uint256 private unlocked = 1;
-
-    event RoomCreated(
-        bytes32 indexed roomId,
-        address indexed creator,
-        address indexed operator,
-        uint256 stake,
-        uint16 maxPlayers,
-        uint64 joinDeadline
-    );
-    event Joined(bytes32 indexed roomId, address indexed player, uint256 stake);
-    event SettlementCommitted(
-        bytes32 indexed roomId,
-        uint256 indexed winningProfile,
-        bytes32 stateRoot,
-        bytes32 payoutsRoot,
-        uint256 totalPayout
-    );
-    event Claimed(bytes32 indexed roomId, address indexed player, uint256 amount);
-    event Refunded(bytes32 indexed roomId, address indexed player, uint256 amount);
-    event RoomFinalized(bytes32 indexed roomId, uint256 unclaimedAmount);
-
-    modifier nonReentrant() {
-        require(unlocked == 1, "Reentrant call");
-        unlocked = 2;
+    
+    mapping(address => Participant) public participants;
+    address[] public participantAddresses;
+    
+    mapping(uint256 => Profile) public profiles;
+    uint256 public numProfiles;
+    
+    uint256 public winningProfile;
+    uint256 public totalWinningEquity;
+    bool public winnerDetermined;
+    
+    event GameStarted(uint256 startTime, uint256 numProfiles);
+    event ParticipantJoined(address indexed participant);
+    event SwitchedProfile(address indexed participant, uint256 oldProfile, uint256 newProfile, uint256 time);
+    event GameEnded(uint256 winningProfile);
+    event PrizeClaimed(address indexed participant, uint256 amount);
+    
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "Not admin");
         _;
-        unlocked = 1;
     }
-
-    function createRoom(
-        bytes32 roomId,
-        address operator,
-        uint128 stake,
-        uint16 maxPlayers,
-        uint64 joinDeadline
-    ) external {
-        require(roomId != bytes32(0), "Invalid room id");
-        require(rooms[roomId].status == RoomStatus.None, "Room already exists");
-        require(operator != address(0), "Invalid operator");
-        require(maxPlayers >= 2 && maxPlayers <= MAX_PLAYERS, "Invalid capacity");
-        require(joinDeadline > block.timestamp, "Join deadline passed");
-
-        rooms[roomId] = Room({
-            creator: msg.sender,
-            operator: operator,
-            stake: stake,
-            maxPlayers: maxPlayers,
-            playerCount: 0,
-            joinDeadline: joinDeadline,
-            gameEnd: 0,
-            settleDeadline: 0,
-            claimDeadline: 0,
-            pool: 0,
-            claimedAmount: 0,
-            winningProfile: 0,
-            stateRoot: bytes32(0),
-            payoutsRoot: bytes32(0),
-            status: RoomStatus.Open
+    
+    constructor() {
+        admin = msg.sender;
+    }
+    
+    function joinGame() external {
+        require(!isGameStarted, "Game already started");
+        require(!participants[msg.sender].hasJoined, "Already joined");
+        
+        participants[msg.sender] = Participant({
+            hasJoined: true,
+            switchCount: 0,
+            lastSwitchTime: 0,
+            targetProfile: 0,
+            hasClaimed: false
         });
-
-        emit RoomCreated(
-            roomId,
-            msg.sender,
-            operator,
-            stake,
-            maxPlayers,
-            joinDeadline
-        );
+        participantAddresses.push(msg.sender);
+        
+        emit ParticipantJoined(msg.sender);
     }
-
-    function startRoom(
-        bytes32 roomId,
-        uint64 gameEnd,
-        uint64 settleDeadline,
-        uint64 claimDeadline
-    ) external {
-        Room storage room = rooms[roomId];
-        require(room.status == RoomStatus.Open, "Room cannot be started");
-        require(msg.sender == room.operator, "Not room operator");
-        require(room.playerCount >= 2, "Not enough players");
-        require(block.timestamp <= room.joinDeadline, "Lobby deadline passed");
-        require(gameEnd > block.timestamp, "Invalid game end");
-        require(settleDeadline > gameEnd, "Invalid settle deadline");
-        require(claimDeadline > settleDeadline, "Invalid claim deadline");
-        room.gameEnd = gameEnd;
-        room.settleDeadline = settleDeadline;
-        room.claimDeadline = claimDeadline;
-        room.status = RoomStatus.Locked;
-    }
-
-    function joinRoom(bytes32 roomId) external payable {
-        Room storage room = rooms[roomId];
-        require(room.status == RoomStatus.Open, "Room is not open");
-        require(block.timestamp <= room.joinDeadline, "Joining closed");
-        require(room.playerCount < room.maxPlayers, "Room is full");
-        require(!hasJoined[roomId][msg.sender], "Already joined");
-        require(msg.value == room.stake, "Incorrect stake");
-
-        hasJoined[roomId][msg.sender] = true;
-        room.playerCount += 1;
-        room.pool += msg.value;
-        emit Joined(roomId, msg.sender, msg.value);
-    }
-
-    function commitSettlement(
-        bytes32 roomId,
-        uint256 winningProfile,
-        bytes32 stateRoot,
-        bytes32 payoutsRoot,
-        uint256 totalPayout
-    ) external {
-        Room storage room = rooms[roomId];
-        require(room.status == RoomStatus.Locked, "Room cannot be settled");
-        require(msg.sender == room.operator, "Not room operator");
-        require(block.timestamp >= room.gameEnd, "Game still running");
-        require(block.timestamp <= room.settleDeadline, "Settlement deadline passed");
-        require(room.playerCount >= 2, "Not enough players");
-        require(stateRoot != bytes32(0), "Invalid state root");
-        require(payoutsRoot != bytes32(0), "Invalid payouts root");
-        require(totalPayout == room.pool, "Payout must equal pool");
-
-        room.winningProfile = winningProfile;
-        room.stateRoot = stateRoot;
-        room.payoutsRoot = payoutsRoot;
-        room.status = RoomStatus.Settled;
-
-        emit SettlementCommitted(
-            roomId,
-            winningProfile,
-            stateRoot,
-            payoutsRoot,
-            totalPayout
-        );
-    }
-
-    function claim(
-        bytes32 roomId,
-        uint256 amount,
-        bytes32[] calldata proof
-    ) external nonReentrant {
-        Room storage room = rooms[roomId];
-        require(room.status == RoomStatus.Settled, "Claims are not open");
-        require(block.timestamp <= room.claimDeadline, "Claim deadline passed");
-        require(hasJoined[roomId][msg.sender], "Not a room player");
-        require(!hasClaimed[roomId][msg.sender], "Already claimed");
-        require(amount > 0, "No payout");
-
-        bytes32 leaf = keccak256(abi.encode(roomId, msg.sender, amount));
-        require(_verifyProof(proof, room.payoutsRoot, leaf), "Invalid proof");
-
-        hasClaimed[roomId][msg.sender] = true;
-        room.claimedAmount += amount;
-        require(room.claimedAmount <= room.pool, "Pool exceeded");
-        (bool sent, ) = payable(msg.sender).call{value: amount}("");
-        require(sent, "Payout failed");
-        emit Claimed(roomId, msg.sender, amount);
-    }
-
-    function refund(bytes32 roomId) external nonReentrant {
-        Room storage room = rooms[roomId];
-        require(
-            room.status == RoomStatus.Open ||
-            room.status == RoomStatus.Locked ||
-            room.status == RoomStatus.Refunding,
-            "Refund unavailable"
-        );
-        uint256 refundAfter = room.status == RoomStatus.Open ? room.joinDeadline : room.settleDeadline;
-        require(block.timestamp > refundAfter, "Settlement still possible");
-        require(hasJoined[roomId][msg.sender], "Not a room player");
-        require(!hasClaimed[roomId][msg.sender], "Already refunded");
-
-        room.status = RoomStatus.Refunding;
-        hasClaimed[roomId][msg.sender] = true;
-        room.claimedAmount += room.stake;
-        (bool sent, ) = payable(msg.sender).call{value: room.stake}("");
-        require(sent, "Refund failed");
-        emit Refunded(roomId, msg.sender, room.stake);
-    }
-
-    function finalizeRoom(bytes32 roomId) external nonReentrant {
-        Room storage room = rooms[roomId];
-        require(msg.sender == room.creator, "Not room creator");
-        require(room.status == RoomStatus.Settled || room.status == RoomStatus.Refunding, "Cannot finalize");
-        require(block.timestamp > room.claimDeadline, "Claims still open");
-
-        uint256 unclaimed = room.pool - room.claimedAmount;
-        room.status = RoomStatus.Finalized;
-        if (unclaimed > 0) {
-            (bool sent, ) = payable(room.creator).call{value: unclaimed}("");
-            require(sent, "Finalization failed");
+    
+    function startGame() external onlyAdmin {
+        require(!isGameStarted, "Already started");
+        require(participantAddresses.length >= 2, "Needs at least 2 participants");
+        
+        numProfiles = participantAddresses.length;
+        startTime = block.timestamp;
+        isGameStarted = true;
+        
+        uint256 L = participantAddresses.length;
+        
+        // Paired vote assignment: every profile gets exactly 1 backer
+        for (uint256 i = 0; i < L; i++) {
+            address pAddr = participantAddresses[i];
+            uint256 targetProfile;
+            
+            if (L % 2 == 0) {
+                if (i % 2 == 0) {
+                    targetProfile = i + 1;
+                } else {
+                    targetProfile = i - 1;
+                }
+            } else {
+                if (i < L - 3) {
+                    if (i % 2 == 0) {
+                        targetProfile = i + 1;
+                    } else {
+                        targetProfile = i - 1;
+                    }
+                } else if (i == L - 3) {
+                    targetProfile = L - 2;
+                } else if (i == L - 2) {
+                    targetProfile = L - 1;
+                } else {
+                    targetProfile = L - 3;
+                }
+            }
+            
+            participants[pAddr].targetProfile = targetProfile;
+            profiles[targetProfile].headCount += 1;
+            profiles[targetProfile].totalActiveEquity += V_0;
         }
-        emit RoomFinalized(roomId, unclaimed);
+        
+        emit GameStarted(startTime, numProfiles);
     }
-
-    function getRoom(bytes32 roomId) external view returns (Room memory) {
-        return rooms[roomId];
+    
+    // Loyalty Curve L(s) * 100 (for precision)
+    function getLoyaltyMultiplier(uint256 s) public pure returns (uint256) {
+        if (s == 0) return 100;
+        if (s == 1) return 85;
+        if (s == 2) return 60;
+        if (s == 3) return 40;
+        return 15;
     }
-
-    function _verifyProof(
-        bytes32[] calldata proof,
-        bytes32 root,
-        bytes32 leaf
-    ) private pure returns (bool) {
-        bytes32 computed = leaf;
-        for (uint256 i = 0; i < proof.length; i++) {
-            bytes32 sibling = proof[i];
-            computed = computed < sibling
-                ? keccak256(abi.encodePacked(computed, sibling))
-                : keccak256(abi.encodePacked(sibling, computed));
+    
+    function switchProfile(uint256 newProfile) external {
+        require(isGameStarted, "Game not started");
+        require(block.timestamp <= startTime + DURATION, "Game window ended");
+        require(newProfile < numProfiles, "Invalid profile");
+        
+        Participant storage p = participants[msg.sender];
+        require(p.hasJoined, "Not a participant");
+        require(p.targetProfile != newProfile, "Already on this profile");
+        
+        uint256 oldProfile = p.targetProfile;
+        uint256 timeElapsed = block.timestamp - startTime;
+        
+        // Remove from old profile
+        uint256 oldEquity = V_0 * getLoyaltyMultiplier(p.switchCount) / 100;
+        profiles[oldProfile].headCount -= 1;
+        profiles[oldProfile].totalActiveEquity -= oldEquity;
+        
+        // Update participant state
+        p.switchCount += 1;
+        p.lastSwitchTime = timeElapsed;
+        p.targetProfile = newProfile;
+        
+        // Add to new profile
+        uint256 newEquity = V_0 * getLoyaltyMultiplier(p.switchCount) / 100;
+        profiles[newProfile].headCount += 1;
+        profiles[newProfile].totalActiveEquity += newEquity;
+        
+        emit SwitchedProfile(msg.sender, oldProfile, newProfile, timeElapsed);
+    }
+    
+    function determineWinner() external {
+        require(isGameStarted, "Game not started");
+        require(block.timestamp > startTime + DURATION, "Game still running");
+        require(!winnerDetermined, "Winner already determined");
+        
+        uint256 bestProfile = 0;
+        uint256 maxHeadcount = 0;
+        uint256 maxEquityForTie = 0;
+        
+        for (uint256 i = 0; i < numProfiles; i++) {
+            uint256 hc = profiles[i].headCount;
+            uint256 eq = profiles[i].totalActiveEquity;
+            
+            if (hc > maxHeadcount) {
+                maxHeadcount = hc;
+                bestProfile = i;
+                maxEquityForTie = eq;
+            } else if (hc == maxHeadcount) {
+                if (eq > maxEquityForTie) {
+                    bestProfile = i;
+                    maxEquityForTie = eq;
+                }
+            }
         }
-        return computed == root;
+        
+        winningProfile = bestProfile;
+        winnerDetermined = true;
+        isGameEnded = true;
+        
+        // Calculate total effective claim shares for the winning profile
+        for (uint256 i = 0; i < participantAddresses.length; i++) {
+            address pAddr = participantAddresses[i];
+            Participant storage p = participants[pAddr];
+            if (p.targetProfile == winningProfile) {
+                totalWinningEquity += calculateEffectiveShares(pAddr);
+            }
+        }
+        
+        emit GameEnded(winningProfile);
+    }
+    
+    // T(t) = 1.00 - 0.002 * t
+    // E_i = A_i * T(t_i)
+    function calculateEffectiveShares(address pAddr) public view returns (uint256) {
+        Participant memory p = participants[pAddr];
+        uint256 activeEquity = V_0 * getLoyaltyMultiplier(p.switchCount) / 100;
+        uint256 t = p.lastSwitchTime;
+        if (t > 100) t = 100;
+        uint256 timeMultiplier = 1000 - (2 * t);
+        
+        return (activeEquity * timeMultiplier) / 1000;
+    }
+    
+    function getClaimShare(address pAddr) public view returns (uint256) {
+        require(winnerDetermined, "Winner not determined");
+        Participant memory p = participants[pAddr];
+        if (p.targetProfile != winningProfile) {
+            return 0;
+        }
+        if (totalWinningEquity == 0) return 0;
+        
+        uint256 myShares = calculateEffectiveShares(pAddr);
+        uint256 globalPrizePool = participantAddresses.length * V_0;
+        
+        return (globalPrizePool * myShares) / totalWinningEquity;
+    }
+    
+    function claimPrize() external {
+        require(winnerDetermined, "Winner not determined");
+        Participant storage p = participants[msg.sender];
+        require(p.hasJoined, "Not a participant");
+        require(p.targetProfile == winningProfile, "Not a backer of the winning profile");
+        require(!p.hasClaimed, "Already claimed");
+        
+        uint256 claimAmount = getClaimShare(msg.sender);
+        require(claimAmount > 0, "No prize to claim");
+        
+        p.hasClaimed = true;
+        
+        emit PrizeClaimed(msg.sender, claimAmount);
     }
 }

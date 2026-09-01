@@ -1,59 +1,26 @@
-import { useState } from 'react';
-
-export default function Landing({ onCreate, onJoin, error }) {
-  const [code, setCode] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const run = async (action) => {
-    setBusy(true);
-    try {
-      await action();
-    } finally {
-      setBusy(false);
-    }
-  };
-
+export default function Landing({ onStart }) {
   return (
     <div className="landing">
       <div className="logo-block screen-enter">
         <div className="logo-slant">SPONSIO</div>
-        <span className="logo-sub">MONAD TESTNET ARCADE</span>
+        <span className="logo-sub">PEER COORDINATION ARENA</span>
         <div className="logo-platform screen-enter d1">
-          <span className="on">● MULTIPLAYER</span>
-          <span className="gold">2–100 PLAYERS</span>
-          <span>MONAD TESTNET</span>
+          <span className="on">● LIVE</span>
+          <span className="gold">100 SECONDS</span>
+          <span>MONAD</span>
         </div>
       </div>
 
       <div className="start-wrap screen-enter d2">
-        <button className="btn-arcade" onClick={() => run(onCreate)} disabled={busy}>
-          {busy ? 'CREATING…' : '▶ CREATE ROOM'}
+        <button className="btn-arcade blink" onClick={onStart}>
+          ▶ START ARENA
         </button>
-        <div className="room-join">
-          <input
-            className="input"
-            value={code}
-            maxLength={6}
-            placeholder="ROOM CODE"
-            onChange={(event) => setCode(event.target.value.toUpperCase().replace(/[^A-Z2-9]/g, ''))}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && code.length >= 4) run(() => onJoin(code));
-            }}
-          />
-          <button
-            className="btn-ghost"
-            disabled={busy || code.length < 4}
-            onClick={() => run(() => onJoin(code))}
-          >
-            JOIN
-          </button>
-        </div>
-        {error && <div className="error-box">{error}</div>}
+        <div className="press-hint">INSERT 1 COIN TO PLAY</div>
       </div>
 
       <div className="landing-feet">
-        <span>STAKE TESTNET MON</span>
-        <span>100 SECOND ROUNDS</span>
+        <span>INSERT COIN</span>
+        <span>FREE TO PLAY</span>
         <span>© SPONSIO</span>
       </div>
     </div>

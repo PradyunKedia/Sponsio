@@ -1,108 +1,75 @@
-'use client';
-
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import Landing from './Landing';
 import Onboarding from './Onboarding';
 import WaitingRoom from './WaitingRoom';
 import GameWindow from './GameWindow';
 import FinalScreen from './FinalScreen';
 import ArcadeBackdrop from './ArcadeBackdrop';
-import useRoomSocket from './hooks/useRoomSocket';
-import { api } from './lib/api';
-import { parseStoredSession } from './lib/roomState';
-
-const SESSION_KEY = 'sponsio-room-session';
-
-function restoredSession() {
-  return parseStoredSession(sessionStorage.getItem(SESSION_KEY));
-}
 
 export default function App() {
-  const [saved] = useState(() => restoredSession());
-  const [view, setView] = useState(saved.token ? 'waiting' : 'landing');
-  const [roomCode, setRoomCode] = useState(
-    saved.roomCode || new URLSearchParams(window.location.search).get('room')?.toUpperCase() || '',
-  );
-  const [player, setPlayer] = useState(saved.player || null);
-  const [token, setToken] = useState(saved.token || '');
-  const [chainConfig, setChainConfig] = useState(null);
-  const [appError, setAppError] = useState('');
-  const [txn, setTxn] = useState(null);
-  const { room, connection, error: socketError, clearError, switchProfile } = useRoomSocket(
-    roomCode,
-    token,
-    player?.wallet,
-  );
+  const [view, setView] = useState('landing');
+  const [player, setPlayer] = useState(null);
+  const [settlement, setSettlement] = useState({
+    split: 0,
+    backedWinner: false,
+    winnerName: '',
+    yourE: 0,
+    yourL: 1,
+    yourTT: 1,
+    totalWinningEquity: 0,
+    pool: 8000,
+  });
+  const [txn, setTxn] = useState(null); // { phase:'in'|'out', to, data }
 
-  useEffect(() => {
-    api.config().then(setChainConfig).catch((error) => setAppError(error.message));
-  }, []);
-
-  const goto = useCallback((to) => {
+  // run a creative transition (wipe) between views
+  const goto = (to) => {
     if (to === view) return;
     setTxn({ phase: 'out', to });
+    // out wipe plays (0.5s), then swap and play 'in'
     setTimeout(() => {
       setView(to);
       setTxn({ phase: 'in', to });
       setTimeout(() => setTxn(null), 650);
     }, 500);
-  }, [view]);
+  };
 
-  useEffect(() => {
-    if (!room || txn) return;
-    // View changes intentionally follow authoritative room phase changes.
-    // oxlint-disable-next-line react/set-state-in-effect
-    if (room.status === 'live' && view !== 'game') goto('game');
-    // oxlint-disable-next-line react/set-state-in-effect
-    if (room.status === 'settled' && view !== 'final') goto('final');
-    if ((room.status === 'lobby' || room.status === 'countdown') && !['waiting', 'onboarding'].includes(view)) {
-      // oxlint-disable-next-line react/set-state-in-effect
-      goto('waiting');
-    }
-  }, [goto, room, txn, view]);
-
-  const selectRoom = async (code) => {
-    setAppError('');
-    const normalized = code.toUpperCase();
-    await api.getRoom(normalized);
-    setRoomCode(normalized);
-    window.history.replaceState({}, '', `?room=${normalized}`);
+  // reset on each run for a fresh spin
+  const startRun = () => {
+    setSettlement({
+      split: 0,
+      backedWinner: false,
+      winnerName: '',
+      yourE: 0,
+      yourL: 1,
+      yourTT: 1,
+      totalWinningEquity: 0,
+      pool: 8000,
+    });
     goto('onboarding');
   };
 
-  const createRoom = async () => {
-    setAppError('');
-    try {
-      const { room: created } = await api.createRoom();
-      await selectRoom(created.code);
-    } catch (error) {
-      setAppError(error.message);
-    }
-  };
-
-  const joinRoom = async (code) => {
-    try {
-      await selectRoom(code);
-    } catch (error) {
-      setAppError(error.message);
-    }
-  };
-
-  const handleOnboardDone = ({ player: joinedPlayer, token: sessionToken }) => {
-    setPlayer(joinedPlayer);
-    setToken(sessionToken);
-    const session = { roomCode, player: joinedPlayer, token: sessionToken };
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  const handleOnboardDone = (me) => {
+    setPlayer(me);
     goto('waiting');
   };
 
-  const goHome = () => {
-    sessionStorage.removeItem(SESSION_KEY);
-    setToken('');
-    setPlayer(null);
-    setRoomCode('');
-    window.history.replaceState({}, '', window.location.pathname);
-    goto('landing');
+  const handleWaiting = {
+    onFull: () => goto('game'),
+    onFallback: () => goto('onboarding'),
+  };
+
+  const handleGameEnd = ({ earnings, backedWinner, winnerName, yourE, yourL, yourTT, totalWinningEquity, pool }) => {
+    setSettlement({
+      split: earnings || 0,
+      backedWinner: !!backedWinner,
+      winnerName: winnerName || 'the leader',
+      yourE: yourE || 0,
+      yourL: yourL != null ? yourL : 1,
+      yourTT: yourTT != null ? yourTT : 1,
+      totalWinningEquity: totalWinningEquity || 0,
+      pool: pool || 8000,
+    });
+    goto('final');
   };
 
   const GAME_MAP = {
@@ -115,60 +82,39 @@ export default function App() {
 
   return (
     <>
+      {/* arcade backdrop — each page gets a different classic game */}
       <ArcadeBackdrop variant={GAME_MAP[view] || 'breakout'} />
       <div className="pixel-grid" />
-      {(appError || socketError || connection === 'reconnecting') && (
-        <div className="connection-banner" onClick={clearError}>
-          {connection === 'reconnecting' ? 'RECONNECTING TO ARENA…' : appError || socketError}
-        </div>
-      )}
 
       <div className="screen-stage">
-        {view === 'landing' && (
-          <Landing onCreate={createRoom} onJoin={joinRoom} error={appError} />
-        )}
-        {view === 'onboarding' && (
-          <Onboarding
-            roomCode={roomCode}
-            chainConfig={chainConfig}
-            onDone={handleOnboardDone}
-          />
-        )}
-        {view === 'waiting' && (
-          <WaitingRoom
-            room={room}
-            roomCode={roomCode}
-            connection={connection}
-            isHost={room?.hostAddress === player?.wallet}
-            onStart={() => api.startRoom(roomCode, token).catch((error) => setAppError(error.message))}
-            onLeave={goHome}
-          />
-        )}
-        {view === 'game' && (
-          <GameWindow
-            me={player}
-            room={room}
-            connection={connection}
-            onSwitch={switchProfile}
-          />
-        )}
+        {view === 'landing' && <Landing onStart={startRun} />}
+        {view === 'onboarding' && <Onboarding onDone={handleOnboardDone} />}
+        {view === 'waiting' && <WaitingRoom username={player?.username} {...handleWaiting} />}
+        {view === 'game' && <GameWindow me={player} onGameEnd={handleGameEnd} />}
         {view === 'final' && (
           <FinalScreen
             me={player}
-            room={room}
-            chainConfig={chainConfig}
-            onPlayAgain={goHome}
-            onHome={goHome}
+            earnings={settlement.split}
+            backedWinner={settlement.backedWinner}
+            winnerName={settlement.winnerName}
+            yourE={settlement.yourE}
+            yourL={settlement.yourL}
+            yourTT={settlement.yourTT}
+            totalWinningEquity={settlement.totalWinningEquity}
+            pool={settlement.pool}
+            onPlayAgain={startRun}
+            onHome={() => goto('landing')}
           />
         )}
       </div>
 
+      {/* creative wipe transition overlay */}
       {txn && (
         <div className={`txn ${txn.phase}`}>
           <div className="txn-bar" />
           <div className="txn-bar" />
           <div className="txn-bar" />
-          <div className="txn-sweep" />
+          <div className="txn-bar" />
         </div>
       )}
     </>
